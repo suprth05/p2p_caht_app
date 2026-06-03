@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P2P Communication Platform</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <!-- Load Socket.IO -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">P2P Communication Platform</div>
+        <div class="nav-links">
+            <a href="/" id="nav-dashboard">Dashboard</a>
+            <a href="/chat" id="nav-chat">Chat</a>
+            <a href="/network" id="nav-network">Network</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        {% block content %}{% endblock %}
+    </div>
+
+    <script>
+        // Set active nav link based on current path
+        const currentPath = window.location.pathname;
+        if (currentPath === '/') document.getElementById('nav-dashboard').classList.add('active');
+        if (currentPath === '/chat') document.getElementById('nav-chat').classList.add('active');
+        if (currentPath === '/network') document.getElementById('nav-network').classList.add('active');
+        
+        // Initialize Socket.IO connection to local backend
+        const socket = io();
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

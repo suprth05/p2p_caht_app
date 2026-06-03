@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card" style="margin-bottom: 2rem;">
+    <div class="card-header">
+        <h2 class="card-title">Node Status</h2>
+    </div>
+    <div class="grid-2">
+        <div>
+            <div class="stat-label">Node ID</div>
+            <div class="peer-id" id="my-node-id" style="font-size: 1.1rem; margin-top: 0.5rem; color: var(--text-main);">Loading...</div>
+        </div>
+        <div>
+            <div class="stat-label">Local IP</div>
+            <div id="my-ip" style="font-size: 1.1rem; margin-top: 0.5rem; font-weight: 500;">Loading...</div>
+        </div>
+    </div>
+</div>
+
+<div class="grid-2">
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Network</h2>
+        </div>
+        <div class="stat-value" id="peer-count">0</div>
+        <div class="stat-label">Discovered Peers</div>
+    </div>
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">System Status</h2>
+        </div>
+        <div style="margin-top: 1rem;">
+            <span class="badge badge-success">Online & Broadcasting</span>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    socket.on('connect', () => {
+        socket.emit('get_node_info');
+        socket.emit('get_peers');
+        
+        // Poll for peers periodically
+        setInterval(() => {
+            socket.emit('get_peers');
+        }, 3000);
+    });
+
+    socket.on('node_info', (data) => {
+        document.getElementById('my-node-id').textContent = data.node_id;
+        document.getElementById('my-ip').textContent = data.ip + ':' + data.port;
+    });
+
+    socket.on('peers_list', (peers) => {
+        document.getElementById('peer-count').textContent = peers.length;
+    });
+</script>
+{% endblock %}

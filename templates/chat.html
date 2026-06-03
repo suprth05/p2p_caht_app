@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card" style="padding: 0;">
+    <div class="chat-container">
+        <div class="peers-panel">
+            <div class="panel-header">Discovered Peers</div>
+            <div class="peer-list" id="peer-list">
+                <!-- Peers populated by JS -->
+                <div class="empty-state">No peers discovered yet</div>
+            </div>
+        </div>
+        
+        <div class="chat-panel">
+            <div class="panel-header" id="chat-header">Select a peer to start messaging</div>
+            
+            <div class="messages-area" id="messages-area">
+                <div class="empty-state" id="chat-placeholder">Messages will appear here</div>
+            </div>
+            
+            <div class="chat-input-area">
+                <input type="text" id="message-input" class="chat-input" placeholder="Type a message..." disabled>
+                <button id="send-btn" class="btn-send" disabled>Send</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+{% endblock %}

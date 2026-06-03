@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Network Topology</h2>
+    </div>
+    
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Node ID</th>
+                    <th>IP Address</th>
+                    <th>Port</th>
+                    <th>Last Seen</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="network-table-body">
+                <tr>
+                    <td colspan="5" class="empty-state" style="height: 100px;">Waiting for peers...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function formatTime(timestamp) {
+        const date = new Date(timestamp * 1000);
+        return date.toLocaleTimeString();
+    }
+
+    socket.on('connect', () => {
+        socket.emit('get_peers');
+        setInterval(() => {
+            socket.emit('get_peers');
+        }, 3000);
+    });
+
+    socket.on('peers_list', (peers) => {
+        const tbody = document.getElementById('network-table-body');
+        
+        if (peers.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="5" class="empty-state" style="height: 100px;">No peers found on the network.</td></tr>`;
+            return;
+        }
+        
+        tbody.innerHTML = '';
+        peers.forEach(peer => {
+            const tr = document.createElement('tr');
+            
+            const timeSinceLastSeen = (Date.now() / 1000) - peer.last_seen;
+            const statusBadge = timeSinceLastSeen > 10 ? 
+                '<span class="badge badge-offline">Stale</span>' : 
+                '<span class="badge badge-success">Active</span>';
+            
+            tr.innerHTML = `
+                <td class="peer-id" style="font-size: 0.875rem;">${peer.node_id}</td>
+                <td>${peer.ip}</td>
+                <td>${peer.port}</td>
+                <td>${formatTime(peer.last_seen)}</td>
+                <td>${statusBadge}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    });
+</script>
+{% endblock %}
