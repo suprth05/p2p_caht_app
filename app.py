@@ -19,6 +19,7 @@ socketio = SocketIO(app, async_mode='eventlet')
 node = None
 peer_manager = PeerManager()
 discovery = None
+received_messages = set()
 
 @app.route('/')
 def dashboard():
@@ -32,16 +33,48 @@ def chat():
 def network():
     return render_template('network.html')
 
+@app.route('/api/ping', methods=['GET'])
+def ping():
+    return jsonify({
+        "status": "ok",
+        "node_id": node.node_id
+    }), 200
+
+@app.route('/api/diagnostic', methods=['GET'])
+def diagnostic():
+    target_node_id = request.args.get('node_id')
+    if not target_node_id:
+        return jsonify({"error": "Missing node_id parameter"}), 400
+        
+    peer = peer_manager.get_peer(target_node_id)
+    if not peer:
+        return jsonify({"error": "Peer not found"}), 404
+        
+    return jsonify({
+        "local_ip": node.ip,
+        "advertised_ip": node.ip,
+        "destination_ip": peer['ip'],
+        "destination_port": peer['port']
+    }), 200
+
 @app.route('/api/message', methods=['POST'])
 def receive_message():
     data = request.json
+    message_id = data.get('message_id')
     sender_id = data.get('sender_id')
     sender_ip = data.get('sender_ip')
     message = data.get('message')
     timestamp = data.get('timestamp')
     
+    if message_id in received_messages:
+        return jsonify({"status": "duplicate"}), 200
+        
+    received_messages.add(message_id)
+    print(f"RECEIVE {message_id}")
+    
     # Broadcast to local frontend
     socketio.emit('receive_message', {
+        'message_id': message_id,
         'sender_id': sender_id,
         'sender_ip': sender_ip,
         'message': message,
@@ -68,14 +101,18 @@ def handle_get_peers():
 def handle_send_message(data):
     target_node_id = data.get('target_node_id')
     message = data.get('message')
+    message_id = data.get('message_id')
     
     peer = peer_manager.get_peer(target_node_id)
     if not peer:
-        socketio.emit('message_error', {'error': 'Peer not found or offline'})
+        socketio.emit('message_error', {'message_id': message_id, 'error': 'Peer not found in local list'})
         return
     
+    ping_url = f"http://{peer['ip']}:{peer['port']}/api/ping"
     target_url = f"http://{peer['ip']}:{peer['port']}/api/message"
+    
     payload = {
+        'message_id': message_id,
         'sender_id': node.node_id,
         'sender_ip': node.ip,
         'message': message,
@@ -83,13 +120,36 @@ def handle_send_message(data):
     }
     
     def send_request():
+        # Ping Phase
         try:
-            # We use a short timeout so we don't block too long on a dead peer
-            response = requests.post(target_url, json=payload, timeout=2.0)
-            if response.status_code != 200:
-                print(f"Failed to send to {target_node_id}")
-        except Exception as e:
-            print(f"Error sending message to {target_node_id}: {e}")
+            ping_resp = requests.get(ping_url, timeout=1.0)
+            if ping_resp.status_code != 200:
+                socketio.emit('message_error', {'message_id': message_id, 'error': 'Peer Offline (Ping failed)'})
+                return
+        except Exception:
+            socketio.emit('message_error', {'message_id': message_id, 'error': 'Peer Offline'})
+            return
+
+        # Sending Phase
+        print(f"SEND {message_id} to {peer['ip']}:{peer['port']}")
+        
+        success = False
+        for attempt in range(3):
+            try:
+                response = requests.post(target_url, json=payload, timeout=2.0)
+                if response.status_code == 200:
+                    success = True
+                    break
+            except Exception:
+                pass
+                
+            time.sleep(0.5) # Wait before retry
+            
+        if success:
+            print(f"ACK {message_id}")
+            socketio.emit('message_ack', {'message_id': message_id})
+        else:
+            socketio.emit('message_error', {'message_id': message_id, 'error': 'Failed to deliver message after 3 retries'})
 
     # Fire and forget in a background thread
     eventlet.spawn(send_request)

@@ -20,7 +20,7 @@ socket.on('peers_list', (peers) => {
 });
 
 socket.on('receive_message', (data) => {
-    const { sender_id, sender_ip, message, timestamp } = data;
+    const { message_id, sender_id, sender_ip, message, timestamp } = data;
     
     // Store message
     if (!chatHistories[sender_id]) {
@@ -28,9 +28,11 @@ socket.on('receive_message', (data) => {
     }
     
     chatHistories[sender_id].push({
+        id: message_id,
         text: message,
         timestamp: timestamp,
-        isSent: false
+        isSent: false,
+        status: 'received'
     });
     
     // If we are currently chatting with this peer, update the UI
@@ -39,6 +41,30 @@ socket.on('receive_message', (data) => {
     } else {
         // Optional: show unread badge
         console.log(`New message from ${sender_id}`);
+    }
+});
+
+socket.on('message_ack', (data) => {
+    const { message_id } = data;
+    // Find message and mark delivered
+    if (activePeerId && chatHistories[activePeerId]) {
+        const msg = chatHistories[activePeerId].find(m => m.id === message_id);
+        if (msg) {
+            msg.status = 'delivered';
+            renderMessages(activePeerId);
+        }
+    }
+});
+
+socket.on('message_error', (data) => {
+    const { message_id, error } = data;
+    if (activePeerId && chatHistories[activePeerId]) {
+        const msg = chatHistories[activePeerId].find(m => m.id === message_id);
+        if (msg) {
+            msg.status = 'failed';
+            msg.errorText = error;
+            renderMessages(activePeerId);
+        }
     }
 });
 
@@ -102,7 +128,15 @@ function renderMessages(nodeId) {
         const time = new Date(msg.timestamp * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
         const metaEl = document.createElement('div');
         metaEl.className = 'message-meta';
-        metaEl.textContent = time;
+        
+        let statusHtml = '';
+        if (msg.isSent) {
+            if (msg.status === 'pending') statusHtml = '<span class="status-pending">Sending...</span>';
+            else if (msg.status === 'delivered') statusHtml = '<span class="status-delivered">✓ Delivered</span>';
+            else if (msg.status === 'failed') statusHtml = `<span class="status-failed">Failed: ${msg.errorText || 'Peer Offline'}</span>`;
+        }
+        
+        metaEl.innerHTML = `${time} ${statusHtml}`;
         
         msgEl.appendChild(textEl);
         msgEl.appendChild(metaEl);
@@ -120,9 +154,11 @@ function sendMessage() {
     if (!text) return;
     
     const timestamp = Date.now() / 1000;
+    const messageId = crypto.randomUUID();
     
     // Send to backend
     socket.emit('send_message', {
+        message_id: messageId,
         target_node_id: activePeerId,
         message: text
     });
@@ -133,9 +169,11 @@ function sendMessage() {
     }
     
     chatHistories[activePeerId].push({
+        id: messageId,
         text: text,
         timestamp: timestamp,
-        isSent: true
+        isSent: true,
+        status: 'pending'
     });
     
     messageInputEl.value = '';

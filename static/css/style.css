@@ -244,6 +244,26 @@ th {
     font-size: 0.7rem;
     margin-top: 0.25rem;
     opacity: 0.8;
+    display: flex;
+    justify-content: space-between;
+}
+
+.status-pending {
+    color: #cbd5e1;
+    font-style: italic;
+}
+
+.status-delivered {
+    color: #86efac;
+}
+
+.message.received .status-delivered {
+    color: #16a34a;
+}
+
+.status-failed {
+    color: #fca5a5;
+    font-weight: 600;
 }
 
 .chat-input-area {

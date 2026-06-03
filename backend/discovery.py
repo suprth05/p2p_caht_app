@@ -64,6 +64,7 @@ class Discovery:
                     
                     # Don't add ourselves
                     if peer_info.get("node_id") != self.node.node_id:
+                        print(f"Discovered Peer:\nNode ID: {peer_info['node_id']}\nAdvertised IP: {peer_info['ip']}\nAdvertised Port: {peer_info['port']}\n")
                         self.peer_manager.update_peer(
                             peer_info["node_id"],
                             peer_info["ip"],
