@@ -137,41 +137,58 @@ def handle_send_message(data):
     }
 
     def send_request():
-        # --- Ping phase ---
         try:
-            ping_resp = requests.get(ping_url, timeout=1.5)
-            if ping_resp.status_code != 200:
+            # --- Ping phase ---
+            print(f"[MSG] Pinging {peer['ip']}:{peer['port']} ...")
+            try:
+                ping_resp = requests.get(ping_url, timeout=2.0)
+                if ping_resp.status_code != 200:
+                    print(f"[MSG] Ping returned {ping_resp.status_code}")
+                    socketio.emit('message_error',
+                        {'message_id': message_id, 'error': 'Peer Offline (ping failed)'},
+                        to=caller_sid)
+                    return
+                print(f"[MSG] Ping OK")
+            except Exception as e:
+                print(f"[MSG] Ping failed: {e}")
                 socketio.emit('message_error',
-                    {'message_id': message_id, 'error': 'Peer Offline (ping failed)'},
+                    {'message_id': message_id, 'error': 'Peer Offline'},
                     to=caller_sid)
                 return
-        except Exception as e:
-            print(f"Ping failed for {peer['ip']}:{peer['port']} — {e}")
-            socketio.emit('message_error',
-                {'message_id': message_id, 'error': 'Peer Offline'},
-                to=caller_sid)
-            return
 
-        # --- Send phase (3 retries) ---
-        print(f"SEND {message_id} to {peer['ip']}:{peer['port']}")
-        success = False
-        for attempt in range(3):
+            # --- Send phase (3 retries) ---
+            print(f"SEND {message_id} to {peer['ip']}:{peer['port']}")
+            success = False
+            last_error = None
+            for attempt in range(3):
+                try:
+                    resp = requests.post(target_url, json=payload, timeout=3.0)
+                    if resp.status_code == 200:
+                        success = True
+                        break
+                    last_error = f"HTTP {resp.status_code}"
+                except Exception as e:
+                    last_error = str(e)
+                if attempt < 2:
+                    time.sleep(0.5)
+
+            if success:
+                print(f"ACK  {message_id}")
+                socketio.emit('message_ack', {'message_id': message_id}, to=caller_sid)
+            else:
+                print(f"[MSG] FAILED {message_id} after 3 retries: {last_error}")
+                socketio.emit('message_error',
+                    {'message_id': message_id, 'error': f'Failed after 3 retries: {last_error}'},
+                    to=caller_sid)
+        except Exception as e:
+            # Catch-all so the greenthread never dies silently
+            print(f"[MSG] UNEXPECTED ERROR in send_request: {e}")
             try:
-                resp = requests.post(target_url, json=payload, timeout=3.0)
-                if resp.status_code == 200:
-                    success = True
-                    break
+                socketio.emit('message_error',
+                    {'message_id': message_id, 'error': f'Internal error: {e}'},
+                    to=caller_sid)
             except Exception:
                 pass
-            time.sleep(0.5)
-
-        if success:
-            print(f"ACK  {message_id}")
-            socketio.emit('message_ack', {'message_id': message_id}, to=caller_sid)
-        else:
-            socketio.emit('message_error',
-                {'message_id': message_id, 'error': 'Failed after 3 retries'},
-                to=caller_sid)
 
     eventlet.spawn(send_request)
 
