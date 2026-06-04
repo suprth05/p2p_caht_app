@@ -1,94 +1,113 @@
 import uuid
 import socket
+import subprocess
+
+
+# Interfaces that are NEVER real physical network adapters
+_VIRTUAL_IFACES = ('lo', 'docker', 'veth', 'br-', 'virbr',
+                   'vmnet', 'vboxnet', 'tailscale', 'tun', 'tap', 'wg')
+
+# Interfaces that are WiFi (prioritise these for hotspot use)
+_WIFI_PREFIXES = ('wlan', 'wlp', 'wlo')
 
 
 class Node:
-    def __init__(self, port=5000):
+    def __init__(self, port=5000, ip_override=None):
         self.node_id = str(uuid.uuid4())
         self.port = port
-        self.ip = self._get_local_ip()
+
+        if ip_override:
+            self.ip = ip_override
+        else:
+            self.ip = self._get_local_ip()
+
         print(f"Node started: {self.node_id} {self.ip}:{self.port}")
 
+    # ------------------------------------------------------------------
     def _get_local_ip(self):
         """
-        Multi-strategy IP detection.  Priority order:
-        1.  Parse `ip route` to find the default-route interface, then grab
-            its IPv4 address — this is the most reliable on Linux.
-        2.  Dummy-socket connect to a public IP (doesn't send traffic).
-        3.  Enumerate all interfaces and pick the first non-junk one.
-        4.  Last resort: 127.0.0.1
+        Detect the real LAN IP fully automatically.
+
+        Strategy:
+          1.  Parse `ip -o -4 addr show` to get every (interface, ip) pair.
+          2.  Throw away virtual / container interfaces by NAME.
+          3.  Only reject 127.x.x.x and 169.254.x.x (link-local) by IP.
+              Do NOT reject 172.x.x.x — real networks use that range.
+          4.  Prefer WiFi interfaces (wlan/wlp) because the user is on a
+              mobile hotspot.
+          5.  Fallback: `hostname -I`, then dummy-socket.
         """
-        import subprocess
 
-        # ── Strategy 1: ip route default ──────────────────────────────────
-        try:
-            # e.g.  "default via 192.168.43.1 dev wlan0 ..."
-            route = subprocess.check_output(
-                ['ip', 'route', 'get', '1.1.1.1'],
-                stderr=subprocess.DEVNULL
-            ).decode()
-            # output: "1.1.1.1 via 192.168.43.1 dev wlan0 src 192.168.43.100 uid ..."
-            for token_idx, token in enumerate(route.split()):
-                if token == 'src' and token_idx + 1 < len(route.split()):
-                    ip = route.split()[token_idx + 1]
-                    if self._is_valid_ip(ip):
-                        print(f"[IP detect] Strategy 1 (ip route): {ip}")
-                        return ip
-        except Exception:
-            pass
+        # ── Primary: enumerate interfaces ─────────────────────────────
+        wifi_ips = []
+        other_ips = []
 
-        # ── Strategy 2: dummy socket ──────────────────────────────────────
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            # This does NOT send any traffic — just lets the OS choose the
-            # outbound interface.
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            if self._is_valid_ip(ip):
-                print(f"[IP detect] Strategy 2 (socket): {ip}")
-                return ip
-        except Exception:
-            pass
-
-        # ── Strategy 3: enumerate interfaces ──────────────────────────────
-        try:
-            output = subprocess.check_output(
+            out = subprocess.check_output(
                 ['ip', '-o', '-4', 'addr', 'show'],
                 stderr=subprocess.DEVNULL
             ).decode()
-            ignore = ('lo', 'docker', 'veth', 'br-', 'virbr',
-                      'vmnet', 'vboxnet', 'tailscale', 'tun', 'tap', 'wg')
-            for line in output.strip().split('\n'):
+
+            for line in out.strip().split('\n'):
                 parts = line.split()
                 if len(parts) < 4:
                     continue
+
                 iface = parts[1]
                 ip = parts[3].split('/')[0]
-                if iface.startswith(ignore):
+
+                # Skip virtual interfaces
+                if iface.startswith(_VIRTUAL_IFACES):
                     continue
-                if self._is_valid_ip(ip):
-                    print(f"[IP detect] Strategy 3 (enumerate {iface}): {ip}")
+
+                # Skip obviously unusable IPs
+                if ip.startswith('127.') or ip.startswith('169.254.'):
+                    continue
+
+                if iface.startswith(_WIFI_PREFIXES):
+                    wifi_ips.append((iface, ip))
+                else:
+                    other_ips.append((iface, ip))
+
+        except Exception:
+            pass
+
+        # Prefer WiFi (hotspot), then wired
+        all_ips = wifi_ips + other_ips
+
+        if all_ips:
+            iface, ip = all_ips[0]
+            print(f"[IP] Detected {ip} on {iface}  "
+                  f"(all: {[(i,a) for i,a in all_ips]})")
+            return ip
+
+        # ── Fallback 1: hostname -I ───────────────────────────────────
+        try:
+            out = subprocess.check_output(
+                ['hostname', '-I'], stderr=subprocess.DEVNULL
+            ).decode().strip()
+            for ip in out.split():
+                if not ip.startswith('127.') and not ip.startswith('169.254.'):
+                    print(f"[IP] Detected {ip} via hostname -I")
                     return ip
         except Exception:
             pass
 
-        print("[IP detect] All strategies failed — using 127.0.0.1")
-        return "127.0.0.1"
+        # ── Fallback 2: dummy socket ──────────────────────────────────
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.settimeout(0)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            if not ip.startswith('127.'):
+                print(f"[IP] Detected {ip} via socket")
+                return ip
+        except Exception:
+            pass
 
-    @staticmethod
-    def _is_valid_ip(ip):
-        """Return True if ip looks like a real LAN address (not loopback,
-        link-local, or Docker-internal 172.17.x.x)."""
-        if not ip:
-            return False
-        if ip.startswith('127.'):
-            return False
-        if ip.startswith('169.254.'):
-            return False
-        if ip.startswith('172.17.'):       # Docker default bridge
-            return False
-        return True
+        print("[IP] WARNING: Could not detect LAN IP — using 127.0.0.1")
+        return "127.0.0.1"
 
     def to_dict(self):
         return {

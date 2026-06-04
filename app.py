@@ -202,9 +202,11 @@ def main():
     parser = argparse.ArgumentParser(description="P2P Node")
     parser.add_argument('--port', type=int, default=5000,
                         help="Port to run the web server on")
+    parser.add_argument('--ip', type=str, default=None,
+                        help="Manually set your LAN IP (e.g. 192.168.43.100)")
     args = parser.parse_args()
 
-    node = Node(port=args.port)
+    node = Node(port=args.port, ip_override=args.ip)
     discovery = Discovery(node, peer_manager)
     discovery.start()
 
